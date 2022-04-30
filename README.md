@@ -188,3 +188,49 @@ foreach ($cursor as $document) {
 }
 
 ```
+
+
+## Configurar ambiente de produção
+
+Em produção, o ideal é utilizar um supervisor para manter em execução
+o processamento da fila com vários workers.
+
+### Instalar o supervisor
+
+```shell
+# instalar o supervisor
+sudo apt-get install supervisor
+```
+
+### Configurar arquivo do worker 
+
+Configurar em **/etc/supervisor/conf.d/mongo-worker.conf**
+
+```text
+[program:mongo-worker]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/consume.php
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=2
+redirect_stderr=true
+stdout_logfile=/var/www/worker.log
+stopwaitsecs=3600
+```
+
+**command=** O caminho do script ou comando que vai fazer o consumo
+
+**numprocs=** O número de workers
+
+### Executar supervisor
+
+```shell
+sudo supervisorctl reread
+
+sudo supervisorctl update
+
+sudo supervisorctl start mongo-worker:*
+```
