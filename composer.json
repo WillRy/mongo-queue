@@ -1,0 +1,27 @@
+{
+  "name": "willry/mongo-queue",
+  "description": "Um gerenciador de filas com MongoDB, permitindo o uso de workers e número de tentativas de processamento em caso de erro",
+  "license": "MIT",
+  "keywords": [
+    "queue",
+    "messagequeue",
+    "message-queue",
+    "mongo-queue",
+    "jobs",
+    "background-jobs",
+    "background-jobs-mongo",
+    "mongodb",
+    "mongo-db"
+  ],
+  "autoload": {
+    "psr-4": {
+      "WillRy\\MongoQueue\\": "src/"
+    }
+  },
+  "require": {
+    "mongodb/mongodb": "^1.12",
+    "ext-mongodb": "*",
+    "ext-pcntl": "*",
+    "php": ">=7.1"
+  }
+}

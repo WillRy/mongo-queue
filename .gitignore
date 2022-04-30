@@ -1,0 +1,12 @@
+.idea
+.vscode
+
+docker/dbdata
+docker/mongo
+
+#composer
+.composer
+vendor
+
+
+.bash_history
