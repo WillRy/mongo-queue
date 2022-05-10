@@ -11,4 +11,4 @@ $requeue = true;
 $maxRetries = 3;
 $autoDelete = true;
 
-$mqueue->consume(2, $requeue, $maxRetries, $autoDelete);
+$mqueue->consume(3, $requeue, $maxRetries, $autoDelete);

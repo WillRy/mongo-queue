@@ -96,23 +96,23 @@ class Queue
             "priority" => 1,
             "tries" => 1,
             "payload" => $payload
-        ])->getInsertedCount();
+        ]);
     }
 
     public function generateMongoDate(string $dateString)
     {
         $time = (new \DateTime($dateString))
-                ->setTimezone(new \DateTimeZone("America/Sao_Paulo"))
+                ->setTimezone(new \DateTimeZone(date_default_timezone_get()))
                 ->getTimestamp() * 1000;
         return new UTCDateTime($time);
     }
 
     public function getMongoDate(UTCDateTime $date)
     {
-        return $date->toDateTime()->setTimezone(new \DateTimeZone(config('app.timezone')));
+        return $date->toDateTime()->setTimezone(new \DateTimeZone(date_default_timezone_get()));
     }
 
-    public function consume($delaySeconds = 2, $requeue = true, $maxRetries = 3, $autoDelete = false, $minutesRequeueUnprocessed = 30)
+    public function consume($delaySeconds = 3, $requeue = true, $maxRetries = 3, $autoDelete = false, $minutesRequeueUnprocessed = 30)
     {
         while (true) {
 
@@ -167,19 +167,21 @@ class Queue
 
                 static::handle($payload);
 
-                $this->collection->updateOne(
-                    [
-                        "_id" => $job['_id']
-                    ],
-                    [
-                        '$set' => [
-                            'end' => 1,
-                            'endTime' => $this->generateMongoDate("now")
+                if($autoDelete) {
+                    $this->deleteJobByID($payload['id']);
+                } else {
+                    $this->collection->updateOne(
+                        [
+                            "_id" => $job['_id']
+                        ],
+                        [
+                            '$set' => [
+                                'end' => 1,
+                                'endTime' => $this->generateMongoDate("now")
+                            ]
                         ]
-                    ]
-                );
-
-                if ($autoDelete) $this->deleteJobByID($payload['id']);
+                    );
+                }
 
             } catch (\Exception $e) {
                 if ($requeue && $payload["tries"] < $maxRetries) $this->analyzeRequeue($payload);
@@ -192,7 +194,7 @@ class Queue
 
     public function analyzeRequeue($payload)
     {
-        return $this->collection->findOneAndUpdate(
+        return $this->collection->updateOne(
             [
                 '_id' => $payload['_id'],
             ],
@@ -216,7 +218,7 @@ class Queue
 
     public function deleteJobByID($id)
     {
-        return $this->collection->deleteMany([
+        return $this->collection->deleteOne([
             "id" => $id
         ]);
     }
@@ -245,7 +247,7 @@ class Queue
      */
     public function ping($id)
     {
-        $this->collection->findOneAndUpdate(
+        $this->collection->updateOne(
             [
                 'id' => $id,
             ],
