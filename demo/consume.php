@@ -1,14 +1,38 @@
 <?php
 
+use WillRy\MongoQueue\Connect;
+
 require_once __DIR__ . "/../vendor/autoload.php";
-require_once __DIR__ . "/Worker.php";
+require_once __DIR__ . "/WorkerQueue.php";
+
+Connect::config("mongo", "root", "root");
 
 
-$mqueue = new Worker("mongo", "root", "root");
-$mqueue->initializeQueue("queue", "list");
-
-$requeue = true;
-$maxRetries = 3;
+/** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
 $autoDelete = true;
 
-$mqueue->consume(3, $requeue, $maxRetries, $autoDelete);
+/** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
+$requeue = true;
+
+/** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
+$maxRetries = null;
+
+/** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
+$visibiityMinutes = 1;
+
+/** @var int Delay em segundos para o processamento de cada item */
+$delaySeconds = 3;
+
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $requeue,
+    $maxRetries,
+    $visibiityMinutes
+);
+$worker = new WorkerQueue();
+$mqueue->consume($worker, $delaySeconds);
+
+
+

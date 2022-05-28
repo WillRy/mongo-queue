@@ -24,15 +24,38 @@ A pasta **demo** contém demonstrações de como **publicar**, **consumir** e **
 
 require __DIR__ . "/../vendor/autoload.php";
 
-$mqueue = new \WillRy\MongoQueue\Queue("mongo", "root", "root");
+use WillRy\MongoQueue\Connect;
 
-$mqueue->initializeQueue("queue", "list");
+Connect::config("mongo", "root", "root");
+
+/** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
+$autoDelete = false;
+
+/** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
+$requeue = true;
+
+/** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
+$maxRetries = 3;
+
+/** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
+$visibiityMinutes = 1;
+
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $requeue,
+    $maxRetries,
+    $visibiityMinutes
+);
 
 $id = rand();
-for ($i = 0; $i <=300;$i++){
+for ($i = 0; $i <=3;$i++){
     $mqueue->insert($i, [
         'id' => $i,
-        "name" => "Fulano {$i}"
+        "name" => "Fulano {$i}",
+        "description" => "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vestibulum semper ex in odio convallis, id dapibus ante ullamcorper. Nulla aliquet risus sapien, nec finibus mi pharetra ac. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Maecenas non sollicitudin lacus, sit amet volutpat sapien. Aliquam erat volutpat. Pellentesque suscipit venenatis rutrum.",
+        "email" => "fulano{$i}@teste.com"
     ]);
 }
 ```
@@ -42,28 +65,34 @@ for ($i = 0; $i <=300;$i++){
 ```php
 <?php
 
-class Worker extends \WillRy\MongoQueue\Queue implements \WillRy\MongoQueue\WorkerInterface
+class WorkerQueue implements \WillRy\MongoQueue\WorkerInterface
 {
 
-    public function handle(array $data)
+    public function handle(\WillRy\MongoQueue\Task $task)
     {
+        try {
+            print("Início: {$task->id} | Tentativa: {$task->tries}".PHP_EOL);
 
-        $parImpar = rand() % 2 === 0;
+            $parImpar = rand() % 2 === 0;
 
-        //se o background job for longo, sinaliza que ainda
-        //está em processamento
-        if($parImpar) $this->ping($data['payload']['id']);
+            //if is too long, made a ping
+            if($parImpar) $task->ping();
 
+            //fake error
+            if($parImpar) throw new Exception("Erro aleatório");
 
-        //fake error
-        if($parImpar) throw new Exception("Erro aleatório");
+            print("Sucesso: {$task->id} | Tentativa: {$task->tries}".PHP_EOL);
 
-        print("Sucesso:{$data['payload']['id']} | Tentativa: {$data['tries']}".PHP_EOL);
+            $task->ack();
+        } catch (\Exception $e) {
+            $task->nack(false);
+            throw $e;
+        }
     }
 
-    public function error(array $data, \Exception $error = null)
+    public function error(\WillRy\MongoQueue\Task $task, \Exception $error = null)
     {
-        print("Retentativa:{$data['payload']['id']}".PHP_EOL);
+        print("Retentativa:{$task->id} | Tentativa: {$task->tries}".PHP_EOL);
     }
 }
 ```
@@ -71,18 +100,40 @@ class Worker extends \WillRy\MongoQueue\Queue implements \WillRy\MongoQueue\Work
 ```php
 <?php
 
+use WillRy\MongoQueue\Connect;
+
 require_once __DIR__ . "/../vendor/autoload.php";
-require_once __DIR__ . "/Worker.php";
+require_once __DIR__ . "/WorkerQueue.php";
+
+Connect::config("mongo", "root", "root");
 
 
-$mqueue = new Worker("mongo", "root", "root");
-$mqueue->initializeQueue("queue", "list");
-
-$requeue = true;
-$maxRetries = 3;
+/** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
 $autoDelete = true;
 
-$mqueue->consume(2, $requeue, $maxRetries, $autoDelete);
+/** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
+$requeue = true;
+
+/** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
+$maxRetries = null;
+
+/** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
+$visibiityMinutes = 1;
+
+/** @var int Delay em segundos para o processamento de cada item */
+$delaySeconds = 3;
+
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $requeue,
+    $maxRetries,
+    $visibiityMinutes
+);
+
+$worker = new WorkerQueue();
+$mqueue->consume($worker, $delaySeconds);
 ```
 
 ### Excluir item específico da fila
@@ -92,13 +143,27 @@ Excluir item da fila com base no ID
 ```php
 <?php
 
+
 require_once __DIR__ . "/../vendor/autoload.php";
 
-//new \WillRy\MongoQueue\Queue("host","user","pass","port")
-$mqueue = new \WillRy\MongoQueue\Queue("mongo", "root", "root");
+use WillRy\MongoQueue\Connect;
+Connect::config("mongo", "root", "root");
 
-$mqueue->deleteJobByID(1);
+$autoDelete = false;
+$requeue = true;
+$maxRetries = 3;
+$visibiityMinutes = 1;
 
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $requeue,
+    $maxRetries,
+    $visibiityMinutes
+);
+
+$mqueue->deleteJobByCustomID(1);
 ```
 
 ### Excluir item antigo na fila
@@ -108,15 +173,27 @@ Excluir itens processados em "N" dias atrás
 ```php
 <?php
 
+
 require_once __DIR__ . "/../vendor/autoload.php";
 
-//new \WillRy\MongoQueue\Queue("host","user","pass","port")
-$mqueue = new \WillRy\MongoQueue\Queue("mongo", "root", "root");
+use WillRy\MongoQueue\Connect;
+Connect::config("mongo", "root", "root");
 
-$mqueue->initializeQueue("queue", "list");
+$autoDelete = false;
+$requeue = true;
+$maxRetries = 3;
+$visibiityMinutes = 1;
+
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $requeue,
+    $maxRetries,
+    $visibiityMinutes
+);
 
 $days = 1;
-
 $mqueue->deleteOldJobs($days);
 ```
 
@@ -145,11 +222,25 @@ Deve criar os indices com base na ordem em que os campos são usados na pesquisa
 ```php
 <?php
 
+
 require_once __DIR__ . "/../vendor/autoload.php";
 
-$mqueue = new \WillRy\MongoQueue\Queue("mongo", "root", "root");
+use WillRy\MongoQueue\Connect;
+Connect::config("mongo", "root", "root");
 
-$mqueue->initializeQueue("queue", "list");
+$autoDelete = false;
+$requeue = true;
+$maxRetries = 3;
+$visibiityMinutes = 1;
+
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $requeue,
+    $maxRetries,
+    $visibiityMinutes
+);
 
 for ($i = 0; $i <= 10; $i++) {
     $mqueue->insert($i, [
@@ -178,7 +269,7 @@ $cursor = $mqueue->searchByPayload(
 );
 $total = $mqueue->countByPayload($filter);
 
-$break = $_SERVER["SERVER_NAME"] ? "<br>" : PHP_EOL;
+$break = !empty($_SERVER["SERVER_NAME"]) ? "<br>" : PHP_EOL;
 
 print("Total: {$total}" . $break);
 

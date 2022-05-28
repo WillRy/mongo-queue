@@ -3,9 +3,22 @@
 
 require_once __DIR__ . "/../vendor/autoload.php";
 
-$mqueue = new \WillRy\MongoQueue\Queue("mongo", "root", "root");
+use WillRy\MongoQueue\Connect;
+Connect::config("mongo", "root", "root");
 
-$mqueue->initializeQueue("queue", "list");
+$autoDelete = false;
+$requeue = true;
+$maxRetries = 3;
+$visibiityMinutes = 1;
+
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $requeue,
+    $maxRetries,
+    $visibiityMinutes
+);
 
 for ($i = 0; $i <= 10; $i++) {
     $mqueue->insert($i, [

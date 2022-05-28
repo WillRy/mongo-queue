@@ -6,7 +6,7 @@ use Exception;
 
 interface WorkerInterface
 {
-    public function handle(array $data);
+    public function handle(Task $data);
 
-    public function error(array $data, Exception $error = null);
+    public function error(Task $data, Exception $error = null);
 }

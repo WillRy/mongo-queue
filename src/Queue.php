@@ -9,16 +9,58 @@ use MongoDB\BSON\UTCDateTime;
 
 class Queue
 {
+    use Helpers;
+
     /** @var Client|null */
     public $db;
 
     /** @var Collection */
     public $collection;
 
-    public function __construct($host, $user, $pass, $port = 27017)
+    /** @var string Nome do banco de dados */
+    public $databaseName;
+
+    /** @var string Nome da collection da fila */
+    public $queueName;
+
+    /** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
+    public $requeue;
+
+    /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
+    public $maxRetries;
+
+    /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
+    public $autoDelete;
+
+    /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
+    public $visibiity;
+
+    public function __construct(
+        string $database,
+        string $queue,
+        $autoDelete = false,
+        $requeue = true,
+        $maxRetries = null,
+        $visibiityMinutes = 30
+    )
     {
-        Connect::config($host, $user, $pass, $port);
         $this->db = Connect::getInstance();
+
+        $this->databaseName = $database;
+
+        $this->queueName = $queue;
+
+        $this->collection = Queue::getCollection($database, $queue);
+
+        $this->initializeQueue();
+
+        $this->requeue = $requeue;
+
+        $this->maxRetries = $maxRetries;
+
+        $this->visibiity = $visibiityMinutes;
+
+        $this->autoDelete = $autoDelete;
 
         /** Graceful shutdown */
         if (php_sapi_name() == "cli") {
@@ -31,6 +73,10 @@ class Queue
         }
     }
 
+    /**
+     * Garante o desligamento correto dos workers
+     * @param $signal
+     */
     public function shutdown($signal)
     {
         switch ($signal) {
@@ -46,10 +92,14 @@ class Queue
         }
     }
 
-    public function initializeQueue(string $database, string $queue)
+    public static function getCollection(string $database, string $queue)
     {
-        $this->collection = $this->db->{$database}->{$queue};
+        return Connect::getInstance()->{$database}->{$queue};
+    }
 
+
+    public function initializeQueue()
+    {
         // index for deleteOldJobs
         $this->collection->createIndex([
             'endTime' => 1
@@ -67,9 +117,10 @@ class Queue
 
         $this->collection->createIndex([
             'start' => 1,
+            'ack' => 1,
+            'nack' => 1,
+            'ping' => 1,
             'tries' => 1,
-            'end' => 1,
-            'ping' => 1
         ]);
     }
 
@@ -91,28 +142,18 @@ class Queue
             "endTime" => null,
             "end" => 0,
             "start" => 0,
+            'ack' => false,
+            'nack' => false,
             "createdOn" => $this->generateMongoDate("now"),
-            "ping" => $this->generateMongoDate("now"),
+            "ping" => null,
             "priority" => 1,
             "tries" => 1,
             "payload" => $payload
         ]);
     }
 
-    public function generateMongoDate(string $dateString)
-    {
-        $time = (new \DateTime($dateString))
-                ->setTimezone(new \DateTimeZone(date_default_timezone_get()))
-                ->getTimestamp() * 1000;
-        return new UTCDateTime($time);
-    }
 
-    public function getMongoDate(UTCDateTime $date)
-    {
-        return $date->toDateTime()->setTimezone(new \DateTimeZone(date_default_timezone_get()));
-    }
-
-    public function consume($delaySeconds = 3, $requeue = true, $maxRetries = 3, $autoDelete = false, $minutesRequeueUnprocessed = 30)
+    public function consume(WorkerInterface $worker, $delaySeconds = 3)
     {
         while (true) {
 
@@ -122,86 +163,105 @@ class Queue
              * Buscar background jobs que não tenham sidos processados
              * ou que comecaram a ser processados e tiveram algum problema
              * que os levou a não serem processados dentro do tempo estimado:
-             * $minutesRequeueUnprocessed
+             * $visibiity
              */
             /** @var BSONDocument $job */
-            $job = $this->collection->findOneAndUpdate(
-                [
-                    '$or' => [
-                        [
-                            'start' => 0,
-                            'tries' => [
-                                '$lte' => $maxRetries
-                            ]
-                        ],
-                        [
-                            'start' => 1,
-                            'tries' => [
-                                '$lte' => $maxRetries
-                            ],
-                            'end' => 0,
-                            'ping' => [
-                                '$lte' => $this->generateMongoDate("-{$minutesRequeueUnprocessed}minutes")
-                            ],
-                        ]
-                    ]
-                ],
-                [
-                    '$set' => [
-                        'startTime' => $this->generateMongoDate("now"),
-                        'start' => 1
-                    ]
-                ],
-                [
-                    'sort' => [
-                        "tries" => 1
-                    ]
-                ]
-            );
+            $job = ($this->requeue && $this->maxRetries) ? $this->getTaskWithRequeue() : $this->getTaskWithoutRequeue();
+
 
             if (empty($job)) continue;
 
             $payload = $job->getArrayCopy();
 
+
+            $task = (new Task(
+                $this->collection,
+                $this->autoDelete,
+                $this->requeue,
+                $this->maxRetries
+            ))->hydrate($payload);
+
             try {
-
-                static::handle($payload);
-
-                if($autoDelete) {
-                    $this->deleteJobByID($payload['id']);
-                } else {
-                    $this->collection->updateOne(
-                        [
-                            "_id" => $job['_id']
-                        ],
-                        [
-                            '$set' => [
-                                'end' => 1,
-                                'endTime' => $this->generateMongoDate("now")
-                            ]
-                        ]
-                    );
-                }
-
+                (new $worker)->handle($task);
             } catch (\Exception $e) {
-                if ($requeue && $payload["tries"] < $maxRetries) $this->analyzeRequeue($payload);
-                static::error($payload, $e);
+                (new $worker)->error($task, $e);
             }
 
         }
 
     }
 
-    public function analyzeRequeue($payload)
+    public function getTaskWithRequeue()
     {
-        return $this->collection->updateOne(
+        return $this->collection->findOneAndUpdate(
             [
-                '_id' => $payload['_id'],
+                '$or' => [
+                    [
+                        'start' => 0,
+                        'ack' => false,
+                        'nack' => false,
+                        'tries' => [
+                            '$lte' => $this->maxRetries
+                        ],
+                        'ping' => null,
+                    ],
+                    [
+                        'start' => 0,
+                        'ack' => false,
+                        'nack' => false,
+                        'tries' => [
+                            '$lte' => $this->maxRetries
+                        ],
+                        'ping' => [
+                            '$lte' => $this->generateMongoDate("-{$this->visibiity}minutes")
+                        ],
+                    ],
+                ]
             ],
             [
                 '$set' => [
-                    'tries' => $payload["tries"] + 1,
-                    'start' => 0
+                    'startTime' => $this->generateMongoDate("now"),
+                    'start' => 1,
+                    'ping' => $this->generateMongoDate("now")
+                ]
+            ],
+            [
+                'sort' => [
+                    "tries" => 1
+                ]
+            ]
+        );
+    }
+
+    public function getTaskWithoutRequeue()
+    {
+        return $this->collection->findOneAndUpdate(
+            [
+                '$or' => [
+                    [
+                        'start' => 0,
+                        'ack' => false,
+                        'nack' => false,
+                    ],
+                    [
+                        'start' => 1,
+                        'ack' => false,
+                        'nack' => false,
+                        'ping' => [
+                            '$lte' => $this->generateMongoDate("-{$this->visibiity}minutes")
+                        ],
+                    ],
+                ]
+            ],
+            [
+                '$set' => [
+                    'startTime' => $this->generateMongoDate("now"),
+                    'start' => 1,
+                ]
+            ],
+            [
+                'sort' => [
+                    "tries" => 1
                 ]
             ]
         );
@@ -216,7 +276,7 @@ class Queue
         ]);
     }
 
-    public function deleteJobByID($id)
+    public function deleteJobByCustomID($id)
     {
         return $this->collection->deleteOne([
             "id" => $id
@@ -238,24 +298,4 @@ class Queue
         return $this->collection->countDocuments($conditions);
     }
 
-    /**
-     * Marca um background job como ainda em processamento
-     *
-     * Deve ser usado para marcar como 'ainda em processamento', os background jobs longos, que extrapolam o tempo
-     * definido no consume
-     * @param $id
-     */
-    public function ping($id)
-    {
-        $this->collection->updateOne(
-            [
-                'id' => $id,
-            ],
-            [
-                '$set' => [
-                    'ping' => $this->generateMongoDate("now")
-                ]
-            ]
-        );
-    }
 }
