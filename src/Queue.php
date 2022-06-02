@@ -182,9 +182,9 @@ class Queue
             ))->hydrate($payload);
 
             try {
-                (new $worker)->handle($task);
+                $worker->handle($task);
             } catch (\Exception $e) {
-                (new $worker)->error($task, $e);
+                $worker->error($task, $e);
             }
 
         }
