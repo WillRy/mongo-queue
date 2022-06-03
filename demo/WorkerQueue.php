@@ -20,7 +20,9 @@ class WorkerQueue implements \WillRy\MongoQueue\WorkerInterface
 
             $task->ack();
         } catch (\Exception $e) {
-            $task->nack(false);
+            $requeue = true;
+            $resetTries = false;
+            $task->nack($requeue, $resetTries);
             throw $e;
         }
     }

@@ -29,10 +29,7 @@ use WillRy\MongoQueue\Connect;
 Connect::config("mongo", "root", "root");
 
 /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
-$autoDelete = false;
-
-/** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
-$requeue = true;
+$autoDelete = true;
 
 /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
 $maxRetries = 3;
@@ -44,13 +41,12 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );
 
 $id = rand();
-for ($i = 0; $i <=3;$i++){
+for ($i = 0; $i <=300;$i++){
     $mqueue->insert($i, [
         'id' => $i,
         "name" => "Fulano {$i}",
@@ -61,6 +57,8 @@ for ($i = 0; $i <=3;$i++){
 ```
 
 ### Consumir item na fila
+
+**Criar classe que processa o item na fila**
 
 ```php
 <?php
@@ -85,7 +83,9 @@ class WorkerQueue implements \WillRy\MongoQueue\WorkerInterface
 
             $task->ack();
         } catch (\Exception $e) {
-            $task->nack(false);
+            $requeue = true;
+            $resetTries = false;
+            $task->nack($requeue, $resetTries);
             throw $e;
         }
     }
@@ -97,6 +97,7 @@ class WorkerQueue implements \WillRy\MongoQueue\WorkerInterface
 }
 ```
 
+**Arquivo que consome a fila com a classe de worker**
 ```php
 <?php
 
@@ -111,11 +112,8 @@ Connect::config("mongo", "root", "root");
 /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
 $autoDelete = true;
 
-/** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
-$requeue = true;
-
 /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
-$maxRetries = null;
+$maxRetries = 3;
 
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
 $visibiityMinutes = 1;
@@ -127,11 +125,9 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );
-
 $worker = new WorkerQueue();
 $mqueue->consume($worker, $delaySeconds);
 ```
@@ -143,14 +139,12 @@ Excluir item da fila com base no ID
 ```php
 <?php
 
-
 require_once __DIR__ . "/../vendor/autoload.php";
 
 use WillRy\MongoQueue\Connect;
 Connect::config("mongo", "root", "root");
 
 $autoDelete = false;
-$requeue = true;
 $maxRetries = 3;
 $visibiityMinutes = 1;
 
@@ -158,12 +152,16 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );
 
-$mqueue->deleteJobByCustomID(1);
+
+/**
+ * Delete old finished jobs by days
+ */
+$days = 1;
+$mqueue->deleteOldJobs($days);
 ```
 
 ### Excluir item antigo na fila
@@ -173,14 +171,12 @@ Excluir itens processados em "N" dias atrás
 ```php
 <?php
 
-
 require_once __DIR__ . "/../vendor/autoload.php";
 
 use WillRy\MongoQueue\Connect;
 Connect::config("mongo", "root", "root");
 
 $autoDelete = false;
-$requeue = true;
 $maxRetries = 3;
 $visibiityMinutes = 1;
 
@@ -188,13 +184,15 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );
 
-$days = 1;
-$mqueue->deleteOldJobs($days);
+/**
+ * Delete job by id
+ */
+$mqueue->deleteJobByCustomID(1);
+
 ```
 
 ### Usar conexão do mongo
@@ -204,7 +202,25 @@ $mqueue->deleteOldJobs($days);
 
 require_once __DIR__ . "/../vendor/autoload.php";
 
-$mqueue = new \WillRy\MongoQueue\Queue("mongo", "root", "root");
+/** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
+$autoDelete = true;
+
+/** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
+$maxRetries = 3;
+
+/** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
+$visibiityMinutes = 1;
+
+/** @var int Delay em segundos para o processamento de cada item */
+$delaySeconds = 3;
+
+$mqueue = new \WillRy\MongoQueue\Queue(
+    "queue",
+    "list",
+    $autoDelete,
+    $maxRetries,
+    $visibiityMinutes
+);
 
 /** @var MongoDB\Client|null  */
 $connection = $mqueue->db;
@@ -237,7 +253,6 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );
@@ -277,7 +292,6 @@ foreach ($cursor as $document) {
     $data = $document->getArrayCopy();
     print("ID: {$data["id"]}" . $break);
 }
-
 ```
 
 

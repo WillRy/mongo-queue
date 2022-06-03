@@ -28,8 +28,6 @@ class Task
      */
     public $collection;
 
-    /** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
-    public $requeue;
 
     /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
     public $maxRetries;
@@ -37,16 +35,13 @@ class Task
     /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
     public $autoDelete;
 
-    public function __construct($collection, $autoDelete = true, $requeue = true, $maxRetries = null)
+    public function __construct($collection, $autoDelete = true, $maxRetries = null)
     {
         $this->db = Connect::getInstance();
-
 
         $this->collection = $collection;
 
         $this->autoDelete = $autoDelete;
-
-        $this->requeue = $requeue;
 
         $this->maxRetries = $maxRetries;
     }
@@ -123,7 +118,7 @@ class Task
      * @param false $resetTries
      * @return mixed
      */
-    public function nack($resetTries = false)
+    public function nack($requeue = true, bool $resetTries = false)
     {
         $payload = [
             'nack' => true,
@@ -133,19 +128,18 @@ class Task
 
         $passMaxTries = $this->tries >= $this->maxRetries;
 
-        if ($this->requeue && $this->maxRetries && !$passMaxTries) {
+        if ($resetTries) $payload['tries'] = 1;
+
+        if ($resetTries || ($requeue && $this->maxRetries && !$passMaxTries)) {
             $payload['start'] = 0;
             $payload['end'] = 0;
             $payload['tries'] = $this->tries + 1;
             $payload['nack'] = false;
         }
 
-        if ($resetTries) {
-            $payload['tries'] = 1;
-        }
 
         //se tem autodelete e não é para fazer requeue: Excluir item
-        if ($this->autoDelete && !$this->requeue) return $this->autoDelete();
+        if ($this->autoDelete && !$requeue) return $this->autoDelete();
 
         //se tem autodelete e passou do numero de retries: Excluir item
         if ($this->autoDelete && $passMaxTries) return $this->autoDelete();

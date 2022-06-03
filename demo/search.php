@@ -15,7 +15,6 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );

@@ -11,11 +11,8 @@ Connect::config("mongo", "root", "root");
 /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
 $autoDelete = true;
 
-/** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
-$requeue = true;
-
 /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
-$maxRetries = null;
+$maxRetries = 3;
 
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
 $visibiityMinutes = 1;
@@ -27,7 +24,6 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );

@@ -23,8 +23,7 @@ class Queue
     /** @var string Nome da collection da fila */
     public $queueName;
 
-    /** @var bool Indica se é para recolocar item na fila automaticamente em caso de erro */
-    public $requeue;
+
 
     /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
     public $maxRetries;
@@ -39,7 +38,6 @@ class Queue
         string $database,
         string $queue,
         $autoDelete = false,
-        $requeue = true,
         $maxRetries = null,
         $visibiityMinutes = 30
     )
@@ -54,7 +52,6 @@ class Queue
 
         $this->initializeQueue();
 
-        $this->requeue = $requeue;
 
         $this->maxRetries = $maxRetries;
 
@@ -166,7 +163,7 @@ class Queue
              * $visibiity
              */
             /** @var BSONDocument $job */
-            $job = ($this->requeue && $this->maxRetries) ? $this->getTaskWithRequeue() : $this->getTaskWithoutRequeue();
+            $job = $this->maxRetries ? $this->getTaskWithRequeue() : $this->getTaskWithoutRequeue();
 
 
             if (empty($job)) continue;
@@ -177,7 +174,6 @@ class Queue
             $task = (new Task(
                 $this->collection,
                 $this->autoDelete,
-                $this->requeue,
                 $this->maxRetries
             ))->hydrate($payload);
 

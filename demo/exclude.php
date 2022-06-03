@@ -1,13 +1,11 @@
 <?php
 
-
 require_once __DIR__ . "/../vendor/autoload.php";
 
 use WillRy\MongoQueue\Connect;
 Connect::config("mongo", "root", "root");
 
 $autoDelete = false;
-$requeue = true;
 $maxRetries = 3;
 $visibiityMinutes = 1;
 
@@ -15,7 +13,6 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
-    $requeue,
     $maxRetries,
     $visibiityMinutes
 );
