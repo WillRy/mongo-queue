@@ -126,14 +126,14 @@ class Task
             'endTime' => $this->generateMongoDate("now"),
         ];
 
-        $passMaxTries = $this->tries >= $this->maxRetries;
+        $inMaxTries = $this->tries === 0;
 
-        if ($resetTries) $payload['tries'] = 1;
+        if ($resetTries) $payload['tries'] = $this->maxRetries;
 
-        if ($resetTries || ($requeue && $this->maxRetries && !$passMaxTries)) {
+        if ($resetTries || ($requeue && $this->maxRetries && !$inMaxTries)) {
             $payload['start'] = 0;
             $payload['end'] = 0;
-            $payload['tries'] = $this->tries + 1;
+            $payload['tries'] = $this->tries - 1;
             $payload['nack'] = false;
         }
 
@@ -142,7 +142,7 @@ class Task
         if ($this->autoDelete && !$requeue) return $this->autoDelete();
 
         //se tem autodelete e passou do numero de retries: Excluir item
-        if ($this->autoDelete && $passMaxTries) return $this->autoDelete();
+        if ($this->autoDelete && $inMaxTries) return $this->autoDelete();
 
         //se não é para excluir o item: Manter item
         return $this->collection->updateOne(

@@ -107,18 +107,14 @@ class Queue
             'id' => 1
         ]);
 
-        // index for analyzeRequeue
-        $this->collection->createIndex([
-            'tries' => 1
-        ]);
-
         $this->collection->createIndex([
             'start' => 1,
             'ack' => 1,
             'nack' => 1,
+            'tries' => -1,
             'ping' => 1,
-            'tries' => 1,
         ]);
+
     }
 
     public function dropDatabase(string $database)
@@ -144,7 +140,7 @@ class Queue
             "createdOn" => $this->generateMongoDate("now"),
             "ping" => null,
             "priority" => 1,
-            "tries" => 1,
+            "tries" => $this->maxRetries,
             "payload" => $payload
         ]);
     }
@@ -196,20 +192,20 @@ class Queue
                         'start' => 0,
                         'ack' => false,
                         'nack' => false,
-                        'tries' => [
-                            '$lte' => $this->maxRetries
-                        ],
                         'ping' => null,
+                        'tries' => [
+                            '$ne' => 0
+                        ],
                     ],
                     [
                         'start' => 0,
                         'ack' => false,
                         'nack' => false,
-                        'tries' => [
-                            '$lte' => $this->maxRetries
-                        ],
                         'ping' => [
                             '$lte' => $this->generateMongoDate("-{$this->visibiity}minutes")
+                        ],
+                        'tries' => [
+                            '$ne' => 0
                         ],
                     ],
                 ]
@@ -223,7 +219,7 @@ class Queue
             ],
             [
                 'sort' => [
-                    "tries" => 1
+                    "tries" => -1
                 ]
             ]
         );
@@ -238,9 +234,10 @@ class Queue
                         'start' => 0,
                         'ack' => false,
                         'nack' => false,
+                        'ping' => null,
                     ],
                     [
-                        'start' => 1,
+                        'start' => 0,
                         'ack' => false,
                         'nack' => false,
                         'ping' => [
@@ -253,11 +250,7 @@ class Queue
                 '$set' => [
                     'startTime' => $this->generateMongoDate("now"),
                     'start' => 1,
-                ]
-            ],
-            [
-                'sort' => [
-                    "tries" => 1
+                    'ping' => $this->generateMongoDate("now")
                 ]
             ]
         );
