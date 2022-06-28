@@ -15,20 +15,23 @@ $autoDelete = true;
 $maxRetries = 3;
 
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
-$visibiityMinutes = 1;
+$visibilityMinutes = 1;
 
 /** @var int Delay em segundos para o processamento de cada item */
 $delaySeconds = 3;
 
 $mqueue = new \WillRy\MongoQueue\Queue(
-    "queue",
-    "list",
+    "queue_database",
+    "queue_list",
     $autoDelete,
     $maxRetries,
-    $visibiityMinutes
+    $visibilityMinutes
 );
 $worker = new WorkerQueue();
-$mqueue->consume($worker, $delaySeconds);
 
 
+/** Consumir um item por vez, recomendado para crons */
+//$mqueue->consume($worker);
 
+/** Consumir através de um loop (recomendado para supervisor e systemd) */
+$mqueue->consumeLoop($worker, $delaySeconds);

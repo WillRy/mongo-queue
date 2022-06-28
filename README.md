@@ -35,14 +35,14 @@ $autoDelete = true;
 $maxRetries = 3;
 
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
-$visibiityMinutes = 1;
+$visibilityMinutes = 1;
 
 $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
     $maxRetries,
-    $visibiityMinutes
+    $visibilityMinutes
 );
 
 $id = rand();
@@ -116,20 +116,26 @@ $autoDelete = true;
 $maxRetries = 3;
 
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
-$visibiityMinutes = 1;
+$visibilityMinutes = 1;
 
 /** @var int Delay em segundos para o processamento de cada item */
 $delaySeconds = 3;
 
 $mqueue = new \WillRy\MongoQueue\Queue(
-    "queue",
-    "list",
+    "queue_database",
+    "queue_list",
     $autoDelete,
     $maxRetries,
-    $visibiityMinutes
+    $visibilityMinutes
 );
 $worker = new WorkerQueue();
-$mqueue->consume($worker, $delaySeconds);
+
+
+/** Consumir um item por vez, recomendado para crons */
+//$mqueue->consume($worker);
+
+/** Consumir através de um loop (recomendado para supervisor e systemd) */
+$mqueue->consumeLoop($worker, $delaySeconds);
 ```
 
 ### Excluir item específico da fila
@@ -146,22 +152,20 @@ Connect::config("mongo", "root", "root");
 
 $autoDelete = false;
 $maxRetries = 3;
-$visibiityMinutes = 1;
+$visibilityMinutes = 1;
 
 $mqueue = new \WillRy\MongoQueue\Queue(
-    "queue",
-    "list",
+    "queue_database",
+    "queue_list",
     $autoDelete,
     $maxRetries,
-    $visibiityMinutes
+    $visibilityMinutes
 );
 
-
 /**
- * Delete old finished jobs by days
+ * Delete job by id
  */
-$days = 1;
-$mqueue->deleteOldJobs($days);
+$mqueue->deleteJobByCustomID(1);
 ```
 
 ### Excluir item antigo na fila
@@ -178,21 +182,20 @@ Connect::config("mongo", "root", "root");
 
 $autoDelete = false;
 $maxRetries = 3;
-$visibiityMinutes = 1;
+$visibilityMinutes = 1;
 
 $mqueue = new \WillRy\MongoQueue\Queue(
-    "queue",
-    "list",
+    "queue_database",
+    "queue_list",
     $autoDelete,
     $maxRetries,
-    $visibiityMinutes
+    $visibilityMinutes
 );
 
 /**
  * Delete job by id
  */
 $mqueue->deleteJobByCustomID(1);
-
 ```
 
 ### Usar conexão do mongo
@@ -209,7 +212,7 @@ $autoDelete = true;
 $maxRetries = 3;
 
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
-$visibiityMinutes = 1;
+$visibilityMinutes = 1;
 
 /** @var int Delay em segundos para o processamento de cada item */
 $delaySeconds = 3;
@@ -219,7 +222,7 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "list",
     $autoDelete,
     $maxRetries,
-    $visibiityMinutes
+    $visibilityMinutes
 );
 
 /** @var MongoDB\Client|null  */
@@ -247,14 +250,14 @@ Connect::config("mongo", "root", "root");
 $autoDelete = false;
 $requeue = true;
 $maxRetries = 3;
-$visibiityMinutes = 1;
+$visibilityMinutes = 1;
 
 $mqueue = new \WillRy\MongoQueue\Queue(
     "queue",
     "list",
     $autoDelete,
     $maxRetries,
-    $visibiityMinutes
+    $visibilityMinutes
 );
 
 for ($i = 0; $i <= 10; $i++) {

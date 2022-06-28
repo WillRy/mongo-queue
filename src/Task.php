@@ -5,16 +5,18 @@ namespace WillRy\MongoQueue;
 
 
 use MongoDB\Client;
+use MongoDB\Collection;
 
 class Task
 {
-    use Helpers;
+
+    use MongoHelpers;
 
     /** @var Client|null */
     public $db;
 
     /** @var
-     * ID de identificação da Task
+     * ID de identificaÃ§Ã£o da Task
      */
     public $id;
 
@@ -24,18 +26,18 @@ class Task
     public $data;
 
     /** @var
-     * Objeto de manipulação da collection
+     * Objeto de manipulaÃ§Ã£o da collection
      */
     public $collection;
 
 
-    /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
+    /** @var int|null NÃºmero mÃ¡ximo de retentativa caso tenha recolocar fila configurado */
     public $maxRetries;
 
-    /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
+    /** @var bool Indica se Ã© para excluir item da fila ao finalizar todo o ciclo de processamento */
     public $autoDelete;
 
-    public function __construct($collection, $autoDelete = true, $maxRetries = null)
+    public function __construct(Collection $collection, $autoDelete = true, $maxRetries = null)
     {
         $this->db = Connect::getInstance();
 
@@ -46,12 +48,22 @@ class Task
         $this->maxRetries = $maxRetries;
     }
 
+    /**
+     * Insere todos os itens no $data da classe
+     * @param $name
+     * @param $value
+     */
     public function __set($name, $value)
     {
         if (empty($this->data)) $this->data = new \stdClass();
         $this->data->$name = $value;
     }
 
+    /**
+     * Pega todos os itens no $data da classe
+     * @param $name
+     * @param $value
+     */
     public function __get($name)
     {
         if (!empty($this->data->$name)) return $this->data->$name;
@@ -92,6 +104,7 @@ class Task
      */
     public function ack()
     {
+
         if ($this->autoDelete) return $this->autoDelete();
 
         return $this->collection->updateOne(
@@ -109,42 +122,47 @@ class Task
     }
 
     /**
-     * Marca o item como processado com erro, sendo possível resetar
+     * Marca o item como processado com erro, sendo possÃ­vel resetar
      * as retentativas manualmente
      *
      * Se tem requeue: Exclui o item ao exceder o limite de tentativas
-     * Se não tem requeue: Mantém o item na fila, mesmo com erro
+     * Se nÃ£o tem requeue: MantÃ©m o item na fila, mesmo com erro
      *
      * @param false $resetTries
      * @return mixed
      */
     public function nack($requeue = true, bool $resetTries = false)
     {
+        $tries = $this->tries > 0 ? $this->tries - 1 : 0;
+
         $payload = [
             'nack' => true,
-            'end' => 0,
+            'end' => 1,
             'endTime' => $this->generateMongoDate("now"),
+            'ping' => null,
+            'tries' => $tries,
         ];
 
-        $inMaxTries = $this->tries === 0;
+        if ($resetTries) {
+            $payload['tries'] = $this->maxRetries;
+            $tries = $this->maxRetries;
+        }
 
-        if ($resetTries) $payload['tries'] = $this->maxRetries;
+        $inMaxTries = $tries === 0;
 
-        if ($resetTries || ($requeue && $this->maxRetries && !$inMaxTries)) {
+        //se tem autodelete e passou do numero de retries: Excluir item
+        if ($this->autoDelete && $inMaxTries && !$resetTries) {
+            return $this->autoDelete();
+        }
+
+        if ($requeue && !$inMaxTries) {
             $payload['start'] = 0;
             $payload['end'] = 0;
-            $payload['tries'] = $this->tries - 1;
+            $payload['tries'] = $tries;
             $payload['nack'] = false;
         }
 
-
-        //se tem autodelete e não é para fazer requeue: Excluir item
-        if ($this->autoDelete && !$requeue) return $this->autoDelete();
-
-        //se tem autodelete e passou do numero de retries: Excluir item
-        if ($this->autoDelete && $inMaxTries) return $this->autoDelete();
-
-        //se não é para excluir o item: Manter item
+        //se nÃ£o Ã© para excluir o item: Manter item
         return $this->collection->updateOne(
             [
                 '_id' => $this->id,
@@ -157,7 +175,7 @@ class Task
     }
 
     /**
-     * Marca que o item ainda está em processamento
+     * Marca que o item ainda estÃ¡ em processamento
      * Para evitar que seja pego novamente pela fila
      */
     public function ping()
@@ -172,6 +190,24 @@ class Task
                 ]
             ]
         );
+    }
+
+    /**
+     * Retorna todos os dados do item na fila
+     * @return object|null
+     */
+    public function getData()
+    {
+        return $this->data;
+    }
+
+    /**
+     * Retorna o payload de um item na fila
+     * @return object|null
+     */
+    public function getPayload()
+    {
+        return $this->payload;
     }
 
 }

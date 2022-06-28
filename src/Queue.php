@@ -1,15 +1,16 @@
 <?php
+declare(ticks=1);
+
 
 namespace WillRy\MongoQueue;
 
 use MongoDB\Client;
 use MongoDB\Collection;
 use MongoDB\Model\BSONDocument;
-use MongoDB\BSON\UTCDateTime;
 
 class Queue
 {
-    use Helpers;
+    use MongoHelpers;
 
     /** @var Client|null */
     public $db;
@@ -23,23 +24,24 @@ class Queue
     /** @var string Nome da collection da fila */
     public $queueName;
 
-
-
-    /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
+    /** @var int|null NÃºmero mÃ¡ximo de retentativa caso tenha recolocar fila configurado */
     public $maxRetries;
 
-    /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
+    /** @var bool Indica se Ã© para excluir item da fila ao finalizar o ciclo de processamento */
     public $autoDelete;
 
-    /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
-    public $visibiity;
+    /** @var int
+     * Tempo em minutos em que se uma atividade nÃ£o for processada depois de for pegada, ela vai ser pega de novo
+     * por que provavelmente travou e ficou pendurada em algum erro
+     */
+    public $visibility;
 
     public function __construct(
         string $database,
         string $queue,
         $autoDelete = false,
-        $maxRetries = null,
-        $visibiityMinutes = 30
+        $maxRetries = 1,
+        $visibilityMinutes = 2
     )
     {
         $this->db = Connect::getInstance();
@@ -50,16 +52,18 @@ class Queue
 
         $this->collection = Queue::getCollection($database, $queue);
 
-        $this->initializeQueue();
+        $this->initializeIndex();
 
-
-        $this->maxRetries = $maxRetries;
-
-        $this->visibiity = $visibiityMinutes;
+        $this->maxRetries = empty($maxRetries) ? 1 : $maxRetries;
 
         $this->autoDelete = $autoDelete;
 
-        /** Graceful shutdown */
+        $this->visibility = $visibilityMinutes;
+
+        /**
+         * Graceful shutdown
+         * Faz a execucao parar ao enviar um sinal do linux para matar o script
+         */
         if (php_sapi_name() == "cli") {
             \pcntl_signal(SIGTERM, function ($signal) {
                 $this->shutdown($signal);
@@ -76,15 +80,16 @@ class Queue
      */
     public function shutdown($signal)
     {
+        $data = date('Y-m-d H:i:s');
         switch ($signal) {
             case SIGTERM:
-                print "Caught SIGTERM" . PHP_EOL;
+                print "Caught SIGTERM {$data}" . PHP_EOL;
                 exit;
             case SIGKILL:
-                print "Caught SIGKILL" . PHP_EOL;;
+                print "Caught SIGKILL {$data}" . PHP_EOL;;
                 exit;
             case SIGINT:
-                print "Caught SIGINT" . PHP_EOL;;
+                print "Caught SIGINT {$data}" . PHP_EOL;;
                 exit;
         }
     }
@@ -95,7 +100,10 @@ class Queue
     }
 
 
-    public function initializeQueue()
+    /**
+     * Cria indices para melhorar a performance da fila
+     */
+    public function initializeIndex()
     {
         // index for deleteOldJobs
         $this->collection->createIndex([
@@ -117,16 +125,6 @@ class Queue
 
     }
 
-    public function dropDatabase(string $database)
-    {
-        return $this->db->dropDatabase($database);
-    }
-
-    public function createIndex(array $columns = [])
-    {
-        return $this->collection->createIndex($columns);
-    }
-
     public function insert($id, $payload)
     {
         return $this->collection->insertOne([
@@ -146,43 +144,56 @@ class Queue
     }
 
 
-    public function consume(WorkerInterface $worker, $delaySeconds = 3)
+    /**
+     * MantÃ©m o consumo da fila em loop
+     * @param WorkerInterface $worker
+     * @param int $delaySeconds
+     */
+    public function consumeLoop(WorkerInterface $worker, $delaySeconds = 3)
     {
         while (true) {
 
             sleep($delaySeconds);
 
-            /**
-             * Buscar background jobs que não tenham sidos processados
-             * ou que comecaram a ser processados e tiveram algum problema
-             * que os levou a não serem processados dentro do tempo estimado:
-             * $visibiity
-             */
             /** @var BSONDocument $job */
-            $job = $this->maxRetries ? $this->getTaskWithRequeue() : $this->getTaskWithoutRequeue();
 
-
-            if (empty($job)) continue;
-
-            $payload = $job->getArrayCopy();
-
-
-            $task = (new Task(
-                $this->collection,
-                $this->autoDelete,
-                $this->maxRetries
-            ))->hydrate($payload);
-
-            try {
-                $worker->handle($task);
-            } catch (\Exception $e) {
-                $worker->error($task, $e);
-            }
-
+            $this->consume($worker);
         }
-
     }
 
+    /**
+     * Buscar background jobs que nÃ£o tenham sidos processados
+     * ou que comecaram a ser processados e tiveram algum problema
+     * que os levou a nÃ£o serem processados dentro do tempo estimado:
+     * $visibility
+     */
+    public function consume(WorkerInterface $worker)
+    {
+        $job = $this->maxRetries ? $this->getTaskWithRequeue() : $this->getTaskWithoutRequeue();
+
+
+        if (empty($job)) return;
+
+        $payload = $job->getArrayCopy();
+
+
+        $task = (new Task(
+            $this->collection,
+            $this->autoDelete,
+            $this->maxRetries
+        ))->hydrate($payload);
+
+        try {
+            $worker->handle($task);
+        } catch (\Exception $e) {
+            $worker->error($task, $e);
+        }
+    }
+
+    /**
+     * Retorna um item na fila, COM analise de retentativa
+     * @return array|object|null
+     */
     public function getTaskWithRequeue()
     {
         return $this->collection->findOneAndUpdate(
@@ -198,11 +209,11 @@ class Queue
                         ],
                     ],
                     [
-                        'start' => 0,
+                        'start' => 1,
                         'ack' => false,
                         'nack' => false,
                         'ping' => [
-                            '$lte' => $this->generateMongoDate("-{$this->visibiity}minutes")
+                            '$lte' => $this->generateMongoDate("-{$this->visibility}minutes")
                         ],
                         'tries' => [
                             '$ne' => 0
@@ -225,6 +236,10 @@ class Queue
         );
     }
 
+    /**
+     * Retorna um item na fila, SEM analise de retentativa
+     * @return array|object|null
+     */
     public function getTaskWithoutRequeue()
     {
         return $this->collection->findOneAndUpdate(
@@ -237,11 +252,11 @@ class Queue
                         'ping' => null,
                     ],
                     [
-                        'start' => 0,
+                        'start' => 1,
                         'ack' => false,
                         'nack' => false,
                         'ping' => [
-                            '$lte' => $this->generateMongoDate("-{$this->visibiity}minutes")
+                            '$lte' => $this->generateMongoDate("-{$this->visibility}minutes")
                         ],
                     ],
                 ]
@@ -256,6 +271,11 @@ class Queue
         );
     }
 
+    /**
+     * Deleta itens antigos na fila
+     * @param int $days
+     * @return \MongoDB\DeleteResult
+     */
     public function deleteOldJobs(int $days = 1)
     {
         return $this->collection->deleteMany([
@@ -265,6 +285,11 @@ class Queue
         ]);
     }
 
+    /**
+     * Deleta um item na fila com base no ID
+     * @param $id
+     * @return \MongoDB\DeleteResult
+     */
     public function deleteJobByCustomID($id)
     {
         return $this->collection->deleteOne([
@@ -273,6 +298,13 @@ class Queue
     }
 
 
+    /**
+     * Pesquisa itens na fila de forma paginada
+     * @param int $page
+     * @param int $perPage
+     * @param array|null[] $conditions
+     * @return \MongoDB\Driver\Cursor
+     */
     public function searchByPayload(int $page = 1, int $perPage = 10, array $conditions = ["startTime" => null])
     {
         $offset = ($page - 1) * $perPage;
@@ -282,9 +314,13 @@ class Queue
         ]);
     }
 
+    /**
+     * Conta itens na fila
+     * @param array|null[] $conditions
+     * @return int
+     */
     public function countByPayload(array $conditions = ["startTime" => null])
     {
         return $this->collection->countDocuments($conditions);
     }
-
 }
