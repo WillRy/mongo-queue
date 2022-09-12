@@ -105,6 +105,8 @@ class Task
     public function ack()
     {
 
+        print_r("[SUCCESS]: {$this->id}" . PHP_EOL);
+
         if ($this->autoDelete) return $this->autoDelete();
 
         return $this->collection->updateOne(
@@ -114,12 +116,30 @@ class Task
             [
                 '$set' => [
                     'ack' => true,
-                    'end' => 1,
-                    'endTime' => $this->generateMongoDate("now")
+                    'endTime' => $this->generateMongoDate("now"),
+                    'status' => Queue::$status['success'],
                 ]
             ]
         );
     }
+
+    public function nackError(bool $resetTries = false, \Exception $error = null)
+    {
+        $msg = !empty($error) ? $error->getMessage() : 'Erro manual';
+
+        print_r("[ERROR]: " . $msg . PHP_EOL);
+
+        return $this->nack(Queue::$status['error'], $resetTries, $error);
+    }
+
+
+    public function nackCanceled()
+    {
+        print_r("[CANCELED]: " . $this->id . PHP_EOL);
+
+        return $this->nack(Queue::$status['canceled'], false, null);
+    }
+
 
     /**
      * Marca o item como processado com erro, sendo possÃ­vel resetar
@@ -131,35 +151,37 @@ class Task
      * @param false $resetTries
      * @return mixed
      */
-    public function nack($requeue = true, bool $resetTries = false)
+    public function nack(string $status, bool $resetTries = false, \Exception $error = null)
     {
-        $tries = $this->tries > 0 ? $this->tries - 1 : 0;
+        $requeue = $this->requeue_on_error && $status !== Queue::$status['canceled'];
+
+        $tries = $this->tries >= 0 ? $this->tries + 1 : 0;
+
+        $maxRetries = $this->maxRetries;
 
         $payload = [
-            'nack' => true,
-            'end' => 1,
             'endTime' => $this->generateMongoDate("now"),
             'ping' => null,
             'tries' => $tries,
+            'last_error' => !empty($error) ? $error->getMessage() : null,
+            'status' => $status
         ];
 
         if ($resetTries) {
-            $payload['tries'] = $this->maxRetries;
-            $tries = $this->maxRetries;
+            $payload['tries'] = 0;
+            $tries = 0;
         }
 
-        $inMaxTries = $tries === 0;
+        $inMaxTries = $tries === $maxRetries;
 
         //se tem autodelete e passou do numero de retries: Excluir item
-        if ($this->autoDelete && $inMaxTries && !$resetTries) {
+        if ($this->autoDelete && $inMaxTries) {
             return $this->autoDelete();
         }
 
         if ($requeue && !$inMaxTries) {
-            $payload['start'] = 0;
-            $payload['end'] = 0;
             $payload['tries'] = $tries;
-            $payload['nack'] = false;
+            $payload['status'] = Queue::$status['waiting'];
         }
 
         //se nÃ£o Ã© para excluir o item: Manter item

@@ -8,5 +8,5 @@ interface WorkerInterface
 {
     public function handle(Task $data);
 
-    public function error(Task $data, \Exception $error = null);
+    public function error($data = null, \Exception $error = null);
 }

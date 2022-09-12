@@ -36,11 +36,18 @@ class Queue
      */
     public $visibility;
 
+    public static $status = [
+        'waiting' => 'waiting',
+        'processing' => 'processing',
+        'canceled' => 'canceled',
+        'error' => 'error',
+        'success' => 'success',
+    ];
+
     public function __construct(
         string $database,
         string $queue,
         $autoDelete = false,
-        $maxRetries = 1,
         $visibilityMinutes = 2
     )
     {
@@ -53,8 +60,6 @@ class Queue
         $this->collection = Queue::getCollection($database, $queue);
 
         $this->initializeIndex();
-
-        $this->maxRetries = empty($maxRetries) ? 1 : $maxRetries;
 
         $this->autoDelete = $autoDelete;
 
@@ -116,29 +121,26 @@ class Queue
         ]);
 
         $this->collection->createIndex([
-            'start' => 1,
-            'ack' => 1,
-            'nack' => 1,
-            'tries' => -1,
+            'status' => 1,
+            'tries' => 1,
             'ping' => 1,
+            'maxRetries' => 1,
         ]);
 
     }
 
-    public function insert($id, $payload)
+    public function insert($id, $payload, $requeue_on_error = true, $maxRetries = 3)
     {
         return $this->collection->insertOne([
             "id" => $id,
             "startTime" => null,
             "endTime" => null,
-            "end" => 0,
-            "start" => 0,
-            'ack' => false,
-            'nack' => false,
             "createdOn" => $this->generateMongoDate("now"),
             "ping" => null,
-            "priority" => 1,
-            "tries" => $this->maxRetries,
+            'requeue_on_error' => $requeue_on_error,
+            'status' => self::$status['waiting'],
+            'maxRetries' => $maxRetries,
+            "tries" => 0,
             "payload" => $payload
         ]);
     }
@@ -169,7 +171,7 @@ class Queue
      */
     public function consume(WorkerInterface $worker)
     {
-        $job = $this->maxRetries ? $this->getTaskWithRequeue() : $this->getTaskWithoutRequeue();
+        $job = $this->getTaskWithRequeue();
 
 
         if (empty($job)) return;
@@ -183,10 +185,14 @@ class Queue
             $this->maxRetries
         ))->hydrate($payload);
 
+        print_r("[RECEIVED TASK]: {$task->id}" . PHP_EOL);
+
         try {
             $worker->handle($task);
         } catch (\Exception $e) {
-            $worker->error($task, $e);
+            $task->nackError(false, $e);
+
+            $worker->error($task->getData(), $e);
         }
     }
 
@@ -200,75 +206,34 @@ class Queue
             [
                 '$or' => [
                     [
-                        'start' => 0,
-                        'ack' => false,
-                        'nack' => false,
+                        'status' => Queue::$status['waiting'],
                         'ping' => null,
-                        'tries' => [
-                            '$ne' => 0
-                        ],
                     ],
                     [
-                        'start' => 1,
-                        'ack' => false,
-                        'nack' => false,
+                        'status' => Queue::$status['processing'],
                         'ping' => [
                             '$lte' => $this->generateMongoDate("-{$this->visibility}minutes")
                         ],
-                        'tries' => [
-                            '$ne' => 0
-                        ],
                     ],
-                ]
+                ],
+                '$where' => "this.tries <= this.maxRetries"
             ],
             [
                 '$set' => [
                     'startTime' => $this->generateMongoDate("now"),
-                    'start' => 1,
-                    'ping' => $this->generateMongoDate("now")
+                    'ping' => $this->generateMongoDate("now"),
+                    'status' => self::$status['processing'],
                 ]
             ],
             [
                 'sort' => [
-                    "tries" => -1
+                    '_id' => 1,
+                    "tries" => 1
                 ]
             ]
         );
-    }
 
-    /**
-     * Retorna um item na fila, SEM analise de retentativa
-     * @return array|object|null
-     */
-    public function getTaskWithoutRequeue()
-    {
-        return $this->collection->findOneAndUpdate(
-            [
-                '$or' => [
-                    [
-                        'start' => 0,
-                        'ack' => false,
-                        'nack' => false,
-                        'ping' => null,
-                    ],
-                    [
-                        'start' => 1,
-                        'ack' => false,
-                        'nack' => false,
-                        'ping' => [
-                            '$lte' => $this->generateMongoDate("-{$this->visibility}minutes")
-                        ],
-                    ],
-                ]
-            ],
-            [
-                '$set' => [
-                    'startTime' => $this->generateMongoDate("now"),
-                    'start' => 1,
-                    'ping' => $this->generateMongoDate("now")
-                ]
-            ]
-        );
+
     }
 
     /**

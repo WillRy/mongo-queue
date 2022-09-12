@@ -5,30 +5,28 @@ class WorkerQueue implements \WillRy\MongoQueue\WorkerInterface
 
     public function handle(\WillRy\MongoQueue\Task $task)
     {
-        try {
-            print("Início: {$task->id} | Tentativa: {$task->tries}".PHP_EOL);
+        $parImpar = rand() % 2 === 0;
 
-            $parImpar = rand() % 2 === 0;
+        //if is too long, made a ping
+        if($parImpar) $task->ping();
 
-            //if is too long, made a ping
-            if($parImpar) $task->ping();
+        //fake error = Exceptions são detectadas e tratadas como nackError automaticamente
+        IF($parImpar) throw new Exception("Erro aleatório");
 
-            //fake error
-            if($parImpar) throw new Exception("Erro aleatório");
 
-            print("Sucesso: {$task->id} | Tentativa: {$task->tries}".PHP_EOL);
+        $task->ack(); //marca como sucesso
 
-            $task->ack();
-        } catch (\Exception $e) {
-            $requeue = true;
-            $resetTries = false;
-            $task->nack($requeue, $resetTries);
-            throw $e;
-        }
+        /** marca como erro */
+        //$task->nackError();
+
+        /** marca como cancelado */
+//        $task->nackCanceled();
+
+
     }
 
-    public function error(\WillRy\MongoQueue\Task $task, \Exception $error = null)
+    public function error($data = null, \Exception $error = null)
     {
-        print("Retentativa:{$task->id} | Tentativa: {$task->tries}".PHP_EOL);
+
     }
 }

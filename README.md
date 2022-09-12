@@ -34,26 +34,32 @@ $autoDelete = true;
 /** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
 $maxRetries = 3;
 
+/** @var bool Se deve recolocar na fila em caso de erro */
+$requeue_on_error = true;
+
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
 $visibilityMinutes = 1;
 
+/** @var int Delay em segundos para o processamento de cada item */
+$delaySeconds = 3;
+
 $mqueue = new \WillRy\MongoQueue\Queue(
-    "queue",
-    "list",
+    "queue_database",
+    "queue_list",
     $autoDelete,
-    $maxRetries,
     $visibilityMinutes
 );
 
 $id = rand();
-for ($i = 0; $i <=300;$i++){
+for ($i = 0; $i <=2;$i++){
     $mqueue->insert($i, [
         'id' => $i,
         "name" => "Fulano {$i}",
         "description" => "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vestibulum semper ex in odio convallis, id dapibus ante ullamcorper. Nulla aliquet risus sapien, nec finibus mi pharetra ac. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Maecenas non sollicitudin lacus, sit amet volutpat sapien. Aliquam erat volutpat. Pellentesque suscipit venenatis rutrum.",
         "email" => "fulano{$i}@teste.com"
-    ]);
+    ], $requeue_on_error, $maxRetries);
 }
+
 ```
 
 ### Consumir item na fila
@@ -68,33 +74,32 @@ class WorkerQueue implements \WillRy\MongoQueue\WorkerInterface
 
     public function handle(\WillRy\MongoQueue\Task $task)
     {
-        try {
-            print("Início: {$task->id} | Tentativa: {$task->tries}".PHP_EOL);
+        $parImpar = rand() % 2 === 0;
 
-            $parImpar = rand() % 2 === 0;
+        //if is too long, made a ping
+        if($parImpar) $task->ping();
 
-            //if is too long, made a ping
-            if($parImpar) $task->ping();
+        //fake error = Exceptions são detectadas e tratadas como nackError automaticamente
+        IF($parImpar) throw new Exception("Erro aleatório");
 
-            //fake error
-            if($parImpar) throw new Exception("Erro aleatório");
 
-            print("Sucesso: {$task->id} | Tentativa: {$task->tries}".PHP_EOL);
+        $task->ack(); //marca como sucesso
 
-            $task->ack();
-        } catch (\Exception $e) {
-            $requeue = true;
-            $resetTries = false;
-            $task->nack($requeue, $resetTries);
-            throw $e;
-        }
+        /** marca como erro */
+        //$task->nackError();
+
+        /** marca como cancelado */
+//        $task->nackCanceled();
+
+
     }
 
-    public function error(\WillRy\MongoQueue\Task $task, \Exception $error = null)
+    public function error($data = null, \Exception $error = null)
     {
-        print("Retentativa:{$task->id} | Tentativa: {$task->tries}".PHP_EOL);
+
     }
 }
+
 ```
 
 **Arquivo que consome a fila com a classe de worker**
@@ -110,10 +115,7 @@ Connect::config("mongo", "root", "root");
 
 
 /** @var bool Indica se é para excluir item da fila ao finalizar todo o ciclo de processamento */
-$autoDelete = true;
-
-/** @var int|null Número máximo de retentativa caso tenha recolocar fila configurado */
-$maxRetries = 3;
+$autoDelete = false;
 
 /** @var int Tempo em minutos que um item fica invisivel na fila, para não ser reprocessado */
 $visibilityMinutes = 1;
@@ -125,7 +127,6 @@ $mqueue = new \WillRy\MongoQueue\Queue(
     "queue_database",
     "queue_list",
     $autoDelete,
-    $maxRetries,
     $visibilityMinutes
 );
 $worker = new WorkerQueue();
