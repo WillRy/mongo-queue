@@ -29,7 +29,7 @@ $mqueue = new \WillRy\MongoQueue\Queue(
 );
 
 $id = rand();
-for ($i = 0; $i <=2;$i++){
+for ($i = 0; $i <=3000;$i++){
     $mqueue->insert($i, [
         'id' => $i,
         "name" => "Fulano {$i}",

@@ -36,19 +36,21 @@ class Queue
      */
     public $visibility;
 
+    public $qtdProcessadas = 0;
+
     public static $status = [
-        'waiting' => 'waiting',
-        'processing' => 'processing',
-        'canceled' => 'canceled',
-        'error' => 'error',
-        'success' => 'success',
+        'waiting' => 1,
+        'processing' => 2,
+        'canceled' => 3,
+        'error' => 4,
+        'success' => 5,
     ];
 
     public function __construct(
         string $database,
         string $queue,
-        $autoDelete = false,
-        $visibilityMinutes = 2
+               $autoDelete = false,
+               $visibilityMinutes = 2
     )
     {
         $this->db = Connect::getInstance();
@@ -122,9 +124,8 @@ class Queue
 
         $this->collection->createIndex([
             'status' => 1,
-            'tries' => 1,
             'ping' => 1,
-            'maxRetries' => 1,
+            'tries' => 1,
         ]);
 
     }
@@ -171,7 +172,20 @@ class Queue
      */
     public function consume(WorkerInterface $worker)
     {
-        $job = $this->getTaskWithRequeue();
+
+        // a cada 10 tarefas, procura uma que ficou esquecida
+
+        if ($this->qtdProcessadas === 10) {
+            $job = $this->getLostTasks();
+
+            $found = !empty($job) ? 1 : 0;
+            print_r("[SEARCHING LOST TASK]: {$found}" . PHP_EOL);
+            $this->qtdProcessadas = 0;
+        } else {
+            $job = $this->getTaskWithRequeue();
+        }
+
+        $this->qtdProcessadas++;
 
 
         if (empty($job)) return;
@@ -204,17 +218,32 @@ class Queue
     {
         return $this->collection->findOneAndUpdate(
             [
-                '$or' => [
-                    [
-                        'status' => Queue::$status['waiting'],
-                        'ping' => null,
-                    ],
-                    [
-                        'status' => Queue::$status['processing'],
-                        'ping' => [
-                            '$lte' => $this->generateMongoDate("-{$this->visibility}minutes")
-                        ],
-                    ],
+                'status' => Queue::$status['waiting'],
+                'ping' => null,
+                '$where' => "this.tries <= this.maxRetries"
+            ],
+            [
+                '$set' => [
+                    'startTime' => $this->generateMongoDate("now"),
+                    'ping' => $this->generateMongoDate("now"),
+                    'status' => self::$status['processing'],
+                ]
+            ],
+            [
+                'sort' => [
+                    "tries" => 1
+                ]
+            ]
+        );
+    }
+
+    public function getLostTasks()
+    {
+        return $this->collection->findOneAndUpdate(
+            [
+                'status' => Queue::$status['processing'],
+                'ping' => [
+                    '$lte' => $this->generateMongoDate("-{$this->visibility}minutes")
                 ],
                 '$where' => "this.tries <= this.maxRetries"
             ],
@@ -227,13 +256,10 @@ class Queue
             ],
             [
                 'sort' => [
-                    '_id' => 1,
                     "tries" => 1
                 ]
             ]
         );
-
-
     }
 
     /**
